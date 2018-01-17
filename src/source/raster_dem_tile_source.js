@@ -5,9 +5,8 @@ const util = require('../util/util');
 const Evented = require('../util/evented');
 const normalizeURL = require('../util/mapbox').normalizeTileURL;
 const browser = require('../util/browser');
-const TileCoord = require('./tile_coord');
+const {OverscaledTileID} = require('./tile_id');
 const RasterTileSource = require('./raster_tile_source');
-const {deserialize} = require('../util/web_worker_transfer');
 
 import type {Source} from './source';
 import type Dispatcher from '../util/dispatcher';
@@ -16,9 +15,7 @@ import type {Callback} from '../types/callback';
 
 
 class RasterDEMTileSource extends RasterTileSource implements Source {
-    _options: RasterSourceSpecification;
-
-    constructor(id: string, options: RasterSourceSpecification, dispatcher: Dispatcher, eventedParent: Evented) {
+    constructor(id: string, options: RasterDEMSourceSpecification, dispatcher: Dispatcher, eventedParent: Evented) {
         super(id, options, dispatcher, eventedParent);
         this.type = 'raster-dem';
         this.maxzoom = 22;
@@ -36,10 +33,10 @@ class RasterDEMTileSource extends RasterTileSource implements Source {
     }
 
     loadTile(tile: Tile, callback: Callback<void>) {
-        const url = normalizeURL(tile.coord.url(this.tiles, null, this.scheme), this.url, this.tileSize);
+        const url = normalizeURL(tile.tileID.canonical.url(this.tiles, this.scheme), this.url, this.tileSize);
         tile.request = ajax.getImage(this.map._transformRequest(url, ajax.ResourceType.Tile), imageLoaded.bind(this));
 
-        tile.neighboringTiles = this._getNeighboringTiles(tile.coord.id);
+        tile.neighboringTiles = this._getNeighboringTiles(tile.tileID);
         function imageLoaded(err, img) {
             delete tile.request;
             if (tile.aborted) {
@@ -56,7 +53,7 @@ class RasterDEMTileSource extends RasterTileSource implements Source {
                 const rawImageData = browser.getImageData(img);
                 const params = {
                     uid: tile.uid,
-                    coord: tile.coord,
+                    coord: tile.tileID,
                     source: this.id,
                     rawImageData: rawImageData
                 };
@@ -67,14 +64,14 @@ class RasterDEMTileSource extends RasterTileSource implements Source {
             }
         }
 
-        function done(err, serialized) {
+        function done(err, dem) {
             if (err) {
                 tile.state = 'errored';
                 callback(err);
             }
 
-            if (serialized) {
-                tile.dem = (deserialize(serialized): any);
+            if (dem) {
+                tile.dem = dem;
                 tile.needsHillshadePrepare = true;
                 tile.state = 'loaded';
                 callback(null);
@@ -83,31 +80,31 @@ class RasterDEMTileSource extends RasterTileSource implements Source {
     }
 
 
-    _getNeighboringTiles(tileId: number) {
-        const {z, x, y, w} = TileCoord.fromID(tileId);
-        const dim = Math.pow(2, z);
+    _getNeighboringTiles(tileID: OverscaledTileID) {
+        const canonical = tileID.canonical;
+        const dim = Math.pow(2, canonical.z);
 
-        const px = (x - 1 + dim) % dim;
-        const pxw = x === 0 ? w - 1 : w;
-        const nx = (x + 1 + dim) % dim;
-        const nxw = x + 1 === dim ? w + 1 : w;
+        const px = (canonical.x - 1 + dim) % dim;
+        const pxw = canonical.x === 0 ? tileID.wrap - 1 : tileID.wrap;
+        const nx = (canonical.x + 1 + dim) % dim;
+        const nxw = canonical.x + 1 === dim ? tileID.wrap + 1 : tileID.wrap;
 
         const neighboringTiles = {};
         // add adjacent tiles
-        neighboringTiles[TileCoord.idFromCoord(z, px, y, pxw)] = {backfilled: false};
-        neighboringTiles[TileCoord.idFromCoord(z, nx, y, nxw)] = {backfilled: false};
+        neighboringTiles[new OverscaledTileID(tileID.overscaledZ, pxw, canonical.z, px, canonical.y).key] = {backfilled: false};
+        neighboringTiles[new OverscaledTileID(tileID.overscaledZ, nxw, canonical.z, nx, canonical.y).key] = {backfilled: false};
 
         // Add upper neighboringTiles
-        if (y > 0) {
-            neighboringTiles[TileCoord.idFromCoord(z, px, y - 1, pxw)] = {backfilled: false};
-            neighboringTiles[TileCoord.idFromCoord(z, x, y - 1, w)] = {backfilled: false};
-            neighboringTiles[TileCoord.idFromCoord(z, nx, y - 1, nxw)] = {backfilled: false};
+        if (canonical.y > 0) {
+            neighboringTiles[new OverscaledTileID(tileID.overscaledZ, pxw, canonical.z, px, canonical.y - 1).key] = {backfilled: false};
+            neighboringTiles[new OverscaledTileID(tileID.overscaledZ, tileID.wrap, canonical.z, canonical.x, canonical.y - 1).key] = {backfilled: false};
+            neighboringTiles[new OverscaledTileID(tileID.overscaledZ, nxw, canonical.z, nx, canonical.y - 1).key] = {backfilled: false};
         }
         // Add lower neighboringTiles
-        if (y + 1 < dim) {
-            neighboringTiles[TileCoord.idFromCoord(z, px, y + 1, pxw)] = {backfilled: false};
-            neighboringTiles[TileCoord.idFromCoord(z, x, y + 1, w)] = {backfilled: false};
-            neighboringTiles[TileCoord.idFromCoord(z, nx, y + 1, nxw)] = {backfilled: false};
+        if (canonical.y + 1 < dim) {
+            neighboringTiles[new OverscaledTileID(tileID.overscaledZ, pxw, canonical.z, px, canonical.y + 1).key] = {backfilled: false};
+            neighboringTiles[new OverscaledTileID(tileID.overscaledZ, tileID.wrap, canonical.z, canonical.x, canonical.y + 1).key] = {backfilled: false};
+            neighboringTiles[new OverscaledTileID(tileID.overscaledZ, nxw, canonical.z, nx, canonical.y + 1).key] = {backfilled: false};
         }
 
         return neighboringTiles;
@@ -116,6 +113,10 @@ class RasterDEMTileSource extends RasterTileSource implements Source {
 
     unloadTile(tile: Tile) {
         if (tile.demTexture) this.map.painter.saveTileTexture(tile.demTexture);
+        if (tile.fbo) {
+            tile.fbo.destroy();
+            delete tile.fbo;
+        }
         if (tile.dem) delete tile.dem;
         delete tile.neighboringTiles;
 

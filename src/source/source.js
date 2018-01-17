@@ -6,7 +6,7 @@ import type Dispatcher from '../util/dispatcher';
 import type Evented from '../util/evented';
 import type Map from '../ui/map';
 import type Tile from './tile';
-import type TileCoord from './tile_coord';
+import type {OverscaledTileID} from './tile_id';
 import type {Callback} from '../types/callback';
 
 /**
@@ -40,7 +40,9 @@ export interface Source {
      * implementation for this Source type by calling `self.registerWorkerSource(workerSource: WorkerSource)`.
      * @private
      */
-    static workerSourceURL?: URL;
+    // Static interface properties are not supported in flow as of 0.62.0.
+    // https://github.com/facebook/flow/issues/5590
+    // static workerSourceURL?: URL;
 
     +type: string;
     id: string;
@@ -61,7 +63,7 @@ export interface Source {
     +onRemove?: (map: Map) => void;
 
     loadTile(tile: Tile, callback: Callback<void>): void;
-    +hasTile?: (coord: TileCoord) => boolean;
+    +hasTile?: (tileID: OverscaledTileID) => boolean;
     +abortTile?: (tile: Tile, callback: Callback<void>) => void;
     +unloadTile?: (tile: Tile, callback: Callback<void>) => void;
 

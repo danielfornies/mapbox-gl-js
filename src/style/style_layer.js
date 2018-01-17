@@ -15,12 +15,9 @@ const {
 
 import type {Bucket} from '../data/bucket';
 import type Point from '@mapbox/point-geometry';
-import type RenderTexture from '../render/render_texture';
 import type {FeatureFilter} from '../style-spec/feature_filter';
-import type {
-    TransitionParameters,
-    EvaluationParameters
-} from './properties';
+import type {TransitionParameters} from './properties';
+import type EvaluationParameters from './evaluation_parameters';
 
 const TRANSITION_SUFFIX = '-transition';
 
@@ -44,7 +41,6 @@ class StyleLayer extends Evented {
     _transitioningPaint: Transitioning<any>;
     +paint: mixed;
 
-    viewportFrame: ?RenderTexture;
     _featureFilter: FeatureFilter;
 
     +queryRadius: (bucket: Bucket) => number;
@@ -199,11 +195,11 @@ class StyleLayer extends Evented {
         }));
     }
 
-    has3DPass() {
+    hasOffscreenPass() {
         return false;
     }
 
-    resize(gl: WebGLRenderingContext) { // eslint-disable-line
+    resize() {
         // noop
     }
 }

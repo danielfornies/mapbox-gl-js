@@ -16,8 +16,14 @@ rtlTextPlugin['processBidirectionalText'] = rtlText.processBidirectionalText;
 
 module.exports = function(style, options, _callback) {
     let wasCallbackCalled = false;
+
+    const timeout = setTimeout(() => {
+        callback(new Error('Test timed out'));
+    }, options.timeout || 20000);
+
     function callback() {
         if (!wasCallbackCalled) {
+            clearTimeout(timeout);
             wasCallbackCalled = true;
             _callback.apply(this, arguments);
         }
@@ -38,7 +44,7 @@ module.exports = function(style, options, _callback) {
         preserveDrawingBuffer: true,
         axonometric: options.axonometric || false,
         skew: options.skew || [0, 0],
-        fadeDuration: 0
+        fadeDuration: options.fadeDuration || 0
     });
 
     // Configure the map to never stop the render loop

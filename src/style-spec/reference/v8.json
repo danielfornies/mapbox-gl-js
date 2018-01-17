@@ -33,7 +33,7 @@
       "default": 0,
       "period": 360,
       "units": "degrees",
-      "doc": "Default bearing, in degrees clockwise from true north.  The style bearing will be used only if the map has not been positioned by other means (e.g. map options or user interaction).",
+      "doc": "Default bearing, in degrees. The bearing is the compass direction that is \"up\"; for example, a bearing of 90° orients the map so that east is up. This value will be used only if the map has not been positioned by other means (e.g. map options or user interaction).",
       "example": 29
     },
     "pitch": {
@@ -108,6 +108,7 @@
   "source": [
     "source_vector",
     "source_raster",
+    "source_raster_dem",
     "source_geojson",
     "source_video",
     "source_image",
@@ -166,9 +167,6 @@
       "values": {
         "raster": {
             "doc": "A raster tile source."
-        },
-        "raster-dem": {
-            "doc": "A raster DEM source using Mapbox Terrain RGB"
         }
       },
       "doc": "The type of the source."
@@ -217,6 +215,58 @@
       },
       "default": "xyz",
       "doc": "Influences the y direction of the tile coordinates. The global-mercator (aka Spherical Mercator) profile is assumed."
+    },
+    "attribution": {
+      "type": "string",
+      "doc": "Contains an attribution to be displayed when the map is shown to a user."
+    },
+    "*": {
+      "type": "*",
+      "doc": "Other keys to configure the data source."
+    }
+  },
+  "source_raster_dem": {
+    "type": {
+      "required": true,
+      "type": "enum",
+      "values": {
+        "raster-dem": {
+            "doc": "A raster DEM source using Mapbox Terrain RGB"
+        }
+      },
+      "doc": "The type of the source."
+    },
+    "url": {
+      "type": "string",
+      "doc": "A URL to a TileJSON resource. Supported protocols are `http:`, `https:`, and `mapbox://<mapid>`."
+    },
+    "tiles": {
+      "type": "array",
+      "value": "string",
+      "doc": "An array of one or more tile source URLs, as in the TileJSON spec."
+    },
+    "bounds": {
+      "type": "array",
+      "value": "number",
+      "length": 4,
+      "default": [-180, -85.0511, 180, 85.0511],
+      "doc": "An array containing the longitude and latitude of the southwest and northeast corners of the source's bounding box in the following order: `[sw.lng, sw.lat, ne.lng, ne.lat]`. When this property is included in a source, no tiles outside of the given bounds are requested by Mapbox GL."
+    },
+    "minzoom": {
+      "type": "number",
+      "default": 0,
+      "doc": "Minimum zoom level for which tiles are available, as in the TileJSON spec."
+    },
+    "maxzoom": {
+      "type": "number",
+      "default": 22,
+      "doc": "Maximum zoom level for which tiles are available, as in the TileJSON spec. Data from tiles at the maxzoom are used when displaying the map at higher zoom levels."
+    },
+    "tileSize": {
+      "type": "number",
+      "default": 512,
+      "units": "pixels",
+      "doc": "The minimum visual size to display tiles for this layer. Only configurable for raster layers."
     },
     "attribution": {
       "type": "string",
@@ -471,7 +521,8 @@
           }
         }
       },
-      "doc": "Rendering type of this layer."
+      "doc": "Rendering type of this layer.",
+      "required": true
     },
     "metadata": {
       "type": "*",
@@ -1018,7 +1069,7 @@
       "function": "piecewise-constant",
       "zoom-function": true,
       "property-function": true,
-      "doc": "Name of image in sprite to use for drawing an image background. A string with `{tokens}` replaced, referencing the data property to pull from. (`{token}` replacement is only supported for literal `icon-image` values; not for property functions.)",
+      "doc": "Name of image in sprite to use for drawing an image background. Within literal values and zoom functions, property names enclosed in curly brackets (e.g. `{token}`) are replaced with the value of the named property. Expressions and property functions do not support this syntax; for equivalent functionality in expressions, use the [`concat`](#expressions-concat) and [`get`](#expressions-get) operators.",
       "tokens": true,
       "sdk-support": {
         "basic functionality": {
@@ -1111,7 +1162,6 @@
     "icon-offset": {
       "type": "array",
       "value": "number",
-      "units": "pixels multiplied by the value of \"icon-size\"",
       "length": 2,
       "default": [
         0,
@@ -1120,7 +1170,7 @@
       "function": "interpolated",
       "zoom-function": true,
       "property-function": true,
-      "doc": "Offset distance of icon from its anchor. Positive values indicate right and down, while negative values indicate left and up. When combined with `icon-rotate` the offset will be as if the rotated direction was up.",
+      "doc": "Offset distance of icon from its anchor. Positive values indicate right and down, while negative values indicate left and up. Each component is multiplied by the value of `icon-size` to obtain the final offset in pixels. When combined with `icon-rotate` the offset will be as if the rotated direction was up.",
       "requires": [
         "icon-image"
       ],
@@ -1302,7 +1352,7 @@
       "property-function": true,
       "default": "",
       "tokens": true,
-      "doc": "Value to use for a text label. Feature properties are specified using tokens like `{field_name}`. (`{token}` replacement is only supported for literal `text-field` values; not for property functions.)",
+      "doc": "Value to use for a text label. Within literal values and zoom functions, property names enclosed in curly brackets (e.g. `{token}`) are replaced with the value of the named property. Expressions and property functions do not support this syntax; for equivalent functionality in expressions, use the [`concat`](#expressions-concat) and [`get`](#expressions-get) operators.",
       "sdk-support": {
         "basic functionality": {
           "js": "0.10.0",
@@ -2003,7 +2053,7 @@
         "group": "Ramps, scales, curves"
       },
       "interpolate": {
-        "doc": "Produces continuous, smooth results by interpolating between pairs of input and output values (\"stops\"). The `input` may be any numeric expression (e.g., `[\"get\", \"population\"]`). Stop inputs must be numeric literals in strictly ascending order. The output type must be `number`, `array<number>`, or `color`.\n\nInterpolation types:\n- `[\"linear\"]`: interpolates linearly between the pair of stops just less than and just greater than the input.\n- `[\"exponential\", base]`: interpolates exponentially between the stops just less than and just greater than the input. `base` controls the rate at which the output increases: higher values make the output increase more towards the high end of the range. With values close to 1 the output increases linearly.\n- `[\"cubic-bezier\", x1, y2, x2, y2]`: interpolates using the cubic bezier curve defined by the given control points.",
+        "doc": "Produces continuous, smooth results by interpolating between pairs of input and output values (\"stops\"). The `input` may be any numeric expression (e.g., `[\"get\", \"population\"]`). Stop inputs must be numeric literals in strictly ascending order. The output type must be `number`, `array<number>`, or `color`.\n\nInterpolation types:\n- `[\"linear\"]`: interpolates linearly between the pair of stops just less than and just greater than the input.\n- `[\"exponential\", base]`: interpolates exponentially between the stops just less than and just greater than the input. `base` controls the rate at which the output increases: higher values make the output increase more towards the high end of the range. With values close to 1 the output increases linearly.\n- `[\"cubic-bezier\", x1, y1, x2, y2]`: interpolates using the cubic bezier curve defined by the given control points.",
         "group": "Ramps, scales, curves"
       },
       "ln2": {
@@ -3164,7 +3214,7 @@
       "minimum": 1,
       "function": "interpolated",
       "zoom-function": true,
-      "property-function": false,
+      "property-function": true,
       "transition": true,
       "units": "pixels",
       "doc": "Radius of influence of one heatmap point in pixels. Increasing the value makes the heatmap smoother, but less detailed.",
@@ -3226,7 +3276,7 @@
       "function": "interpolated",
       "zoom-function": false,
       "property-function": false,
-      "transition": true,
+      "transition": false,
       "sdk-support": {
         "basic functionality": {
           "js": "0.41.0"
@@ -3778,7 +3828,7 @@
         "doc": "The direction of the light source used to generate the hillshading with 0 as the top of the viewport if `hillshade-illumination-anchor` is set to `viewport` and due north if `hillshade-illumination-anchor` is set to `map`.",
         "function": "interpolated",
         "zoom-function": true,
-        "transition": true
+        "transition": false
       },
       "hillshade-illumination-anchor": {
         "type": "enum",

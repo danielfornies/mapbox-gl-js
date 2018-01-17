@@ -8,6 +8,7 @@ const DOM = require('../util/dom');
 const ajax = require('../util/ajax');
 
 const Style = require('../style/style');
+const EvaluationParameters = require('../style/evaluation_parameters');
 const Painter = require('../render/painter');
 
 const Transform = require('../geo/transform');
@@ -21,7 +22,8 @@ const LngLatBounds = require('../geo/lng_lat_bounds');
 const Point = require('@mapbox/point-geometry');
 const AttributionControl = require('./control/attribution_control');
 const LogoControl = require('./control/logo_control');
-const isSupported = require('mapbox-gl-supported');
+const isSupported = require('@mapbox/mapbox-gl-supported');
+const {RGBAImage} = require('../util/image');
 
 require('./events'); // Pull in for documentation.js
 
@@ -30,7 +32,6 @@ import type {LngLatBoundsLike} from '../geo/lng_lat_bounds';
 import type {RequestParameters} from '../util/ajax';
 import type {StyleOptions} from '../style/style';
 import type {MapEvent, MapDataEvent} from './events';
-import type {RGBAImage} from '../util/image';
 
 import type ScrollZoomHandler from './handler/scroll_zoom';
 import type BoxZoomHandler from './handler/box_zoom';
@@ -163,7 +164,7 @@ const defaultOptions = {
  *   For example, `http://path/to/my/page.html#2.59/39.26/53.07/-24.1/60`.
  * @param {boolean} [options.interactive=true] If `false`, no mouse, touch, or keyboard listeners will be attached to the map, so it will not respond to interaction.
  * @param {number} [options.bearingSnap=7] The threshold, measured in degrees, that determines when the map's
- *   bearing (rotation) will snap to north. For example, with a `bearingSnap` of 7, if the user rotates
+ *   bearing will snap to north. For example, with a `bearingSnap` of 7, if the user rotates
  *   the map within 7 degrees of north, the map will automatically snap to exact north.
  * @param {boolean} [options.pitchWithRotate=true] If `false`, the map's pitch (tilt) control with "drag to rotate" interaction will be disabled.
  * @param {boolean} [options.attributionControl=true] If `true`, an {@link AttributionControl} will be added to the map.
@@ -201,7 +202,7 @@ const defaultOptions = {
  *   style: style_object,
  *   hash: true,
  *   transformRequest: (url, resourceType)=> {
- *     if(resourceType == 'Source' && url.startsWith('http://myHost') {
+ *     if(resourceType == 'Source' && url.startsWith('http://myHost')) {
  *       return {
  *        url: url.replace('http', 'https'),
  *        headers: { 'my-custom-header': true},
@@ -242,6 +243,7 @@ class Map extends Camera {
     _hash: Hash;
     _delegatedListeners: any;
     _fadeDuration: number;
+    _crossFadingFactor: number;
 
     scrollZoom: ScrollZoomHandler;
     boxZoom: BoxZoomHandler;
@@ -269,6 +271,7 @@ class Map extends Camera {
         this._bearingSnap = options.bearingSnap;
         this._refreshExpiredTiles = options.refreshExpiredTiles;
         this._fadeDuration = options.fadeDuration;
+        this._crossFadingFactor = 1;
 
         const transformRequestFn = options.transformRequest;
         this._transformRequest = transformRequestFn ?  (url, type) => transformRequestFn(url, type) || ({ url }) : (url) => ({ url });
@@ -1044,22 +1047,26 @@ class Map extends Camera {
      * @see [Add an icon to the map](https://www.mapbox.com/mapbox-gl-js/example/add-image/)
      * @see [Add a generated icon to the map](https://www.mapbox.com/mapbox-gl-js/example/add-image-generated/)
      * @param id The ID of the image.
-     * @param data The image as an `HTMLImageElement`, `ImageData`, or object with `width`, `height`, and `data`
+     * @param image The image as an `HTMLImageElement`, `ImageData`, or object with `width`, `height`, and `data`
      * properties with the same format as `ImageData`.
      * @param options
      * @param options.pixelRatio The ratio of pixels in the image to physical pixels on the screen
      * @param options.sdf Whether the image should be interpreted as an SDF image
      */
-    addImage(id: string, data: HTMLImageElement | ImageData | {width: number, height: number, data: Uint8Array | Uint8ClampedArray},
+    addImage(id: string,
+             image: HTMLImageElement | ImageData | {width: number, height: number, data: Uint8Array | Uint8ClampedArray},
              {pixelRatio = 1, sdf = false}: {pixelRatio?: number, sdf?: boolean} = {}) {
-        if (data instanceof HTMLImageElement) {
-            data = browser.getImageData(data);
-        } else if (data.width === undefined || data.height === undefined) {
+        if (image instanceof HTMLImageElement) {
+            const {width, height, data} = browser.getImageData(image);
+            this.style.addImage(id, { data: new RGBAImage({width, height}, data), pixelRatio, sdf });
+        } else if (image.width === undefined || image.height === undefined) {
             return this.fire('error', {error: new Error(
                 'Invalid arguments to map.addImage(). The second argument must be an `HTMLImageElement`, `ImageData`, ' +
                 'or object with `width`, `height`, and `data` properties with the same format as `ImageData`')});
+        } else {
+            const {width, height, data} = image;
+            this.style.addImage(id, { data: new RGBAImage({width, height}, data.slice(0)), pixelRatio, sdf });
         }
-        this.style.addImage(id, { data: ((data: any): RGBAImage), pixelRatio, sdf });
     }
 
     /**
@@ -1419,7 +1426,7 @@ class Map extends Camera {
      * @returns {boolean} A Boolean indicating whether the map is fully loaded.
      */
     loaded() {
-        if (this._styleDirty || this._sourcesDirty || this._placementDirty)
+        if (this._styleDirty || this._sourcesDirty)
             return false;
         if (!this.style || !this.style.loaded())
             return false;
@@ -1458,14 +1465,32 @@ class Map extends Camera {
             this._updateEase();
         }
 
-        // If the style has changed, the map is being zoomed, or a transition
-        // is in progress:
+        let crossFading = false;
+
+        // If the style has changed, the map is being zoomed, or a transition or fade is in progress:
         //  - Apply style changes (in a batch)
-        //  - Recalculate zoom-dependent paint properties.
+        //  - Recalculate paint properties.
         if (this.style && this._styleDirty) {
             this._styleDirty = false;
-            this.style.update();
-            this.style._recalculate(this.transform.zoom, this._fadeDuration);
+
+            const zoom = this.transform.zoom;
+            const now = browser.now();
+            this.style.zoomHistory.update(zoom, now);
+
+            const parameters = new EvaluationParameters(zoom, {
+                now,
+                fadeDuration: this._fadeDuration,
+                zoomHistory: this.style.zoomHistory,
+                transition: this.style.getTransition()
+            });
+
+            const factor = parameters.crossFadingFactor();
+            if (factor !== 1 || factor !== this._crossFadingFactor) {
+                crossFading = true;
+                this._crossFadingFactor = factor;
+            }
+
+            this.style.update(parameters);
         }
 
         // If we are in _render for any reason other than an in-progress paint
@@ -1494,7 +1519,7 @@ class Map extends Camera {
             this.fire('load');
         }
 
-        if (this.style && this.style.hasTransitions()) {
+        if (this.style && (this.style.hasTransitions() || crossFading)) {
             this._styleDirty = true;
         }
 

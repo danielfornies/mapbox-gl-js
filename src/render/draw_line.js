@@ -2,14 +2,15 @@
 
 const browser = require('../util/browser');
 const pixelsToTileUnits = require('../source/pixels_to_tile_units');
+const DepthMode = require('../gl/depth_mode');
 
 import type Painter from './painter';
 import type SourceCache from '../source/source_cache';
 import type LineStyleLayer from '../style/style_layer/line_style_layer';
 import type LineBucket from '../data/bucket/line_bucket';
-import type TileCoord from '../source/tile_coord';
+import type {OverscaledTileID} from '../source/tile_id';
 
-module.exports = function drawLine(painter: Painter, sourceCache: SourceCache, layer: LineStyleLayer, coords: Array<TileCoord>) {
+module.exports = function drawLine(painter: Painter, sourceCache: SourceCache, layer: LineStyleLayer, coords: Array<OverscaledTileID>) {
     if (painter.renderPass !== 'translucent') return;
 
     const opacity = layer.paint.get('line-opacity');
@@ -17,10 +18,8 @@ module.exports = function drawLine(painter: Painter, sourceCache: SourceCache, l
 
     const context = painter.context;
 
-    painter.setDepthSublayer(0);
-    context.depthMask.set(false);
-
-    context.stencilTest.set(true);
+    context.setDepthMode(painter.depthModeForSublayer(0, DepthMode.ReadOnly));
+    context.setColorMode(painter.colorModeForRenderPass());
 
     const programId =
         layer.paint.get('line-dasharray') ? 'lineSDF' :
@@ -35,16 +34,16 @@ module.exports = function drawLine(painter: Painter, sourceCache: SourceCache, l
         if (!bucket) continue;
 
         const programConfiguration = bucket.programConfigurations.get(layer.id);
-        const prevProgram = painter.currentProgram;
+        const prevProgram = painter.context.program.get();
         const program = painter.useProgram(programId, programConfiguration);
-        const programChanged = firstTile || program !== prevProgram;
-        const tileRatioChanged = prevTileZoom !== tile.coord.z;
+        const programChanged = firstTile || program.program !== prevProgram;
+        const tileRatioChanged = prevTileZoom !== tile.tileID.overscaledZ;
 
         if (programChanged) {
             programConfiguration.setUniforms(painter.context, program, layer.paint, {zoom: painter.transform.zoom});
         }
         drawLineTile(program, painter, tile, bucket, layer, coord, programConfiguration, programChanged, tileRatioChanged);
-        prevTileZoom = tile.coord.z;
+        prevTileZoom = tile.tileID.overscaledZ;
         firstTile = false;
     }
 };
@@ -110,7 +109,7 @@ function drawLineTile(program, painter, tile, bucket, layer, coord, programConfi
         }
     }
 
-    painter.enableTileClippingMask(coord);
+    context.setStencilMode(painter.stencilModeForClipping(coord));
 
     const posMatrix = painter.translatePosMatrix(coord.posMatrix, tile, layer.paint.get('line-translate'), layer.paint.get('line-translate-anchor'));
     gl.uniformMatrix4fv(program.uniforms.u_matrix, false, posMatrix);
